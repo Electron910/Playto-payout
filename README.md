@@ -95,8 +95,8 @@ Customer pays merchant (seeded/simulated)
 ### Start
 
 ```bash
-git clone https://github.com/your-username/playto-payout-engine.git
-cd playto-payout-engine
+git clone https://github.com/Electron910/Playto-payout.git
+cd playto-payout
 docker-compose up --build
 ```
 
