@@ -1,0 +1,114 @@
+databases:
+  - name: playto-db
+    plan: free
+    databaseName: playto
+    user: playto
+
+services:
+  - type: redis
+    name: playto-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+
+  - type: web
+    name: playto-backend
+    plan: free
+    runtime: python
+    rootDir: backend
+    buildCommand: chmod +x build.sh && ./build.sh
+    startCommand: gunicorn playto.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 2 --timeout 120
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: playto-db
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: playto-redis
+          type: redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          name: playto-redis
+          type: redis
+          property: connectionString
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com"
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+
+  - type: worker
+    name: playto-celery-worker
+    plan: free
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A playto worker -l info --concurrency=2
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        fromService:
+          name: playto-backend
+          type: web
+          envVarKey: DJANGO_SECRET_KEY
+      - key: DATABASE_URL
+        fromDatabase:
+          name: playto-db
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: playto-redis
+          type: redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          name: playto-redis
+          type: redis
+          property: connectionString
+
+  - type: worker
+    name: playto-celery-beat
+    plan: free
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A playto beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        fromService:
+          name: playto-backend
+          type: web
+          envVarKey: DJANGO_SECRET_KEY
+      - key: DATABASE_URL
+        fromDatabase:
+          name: playto-db
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: playto-redis
+          type: redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          name: playto-redis
+          type: redis
+          property: connectionString
+
+  - type: web
+    name: playto-frontend
+    plan: free
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

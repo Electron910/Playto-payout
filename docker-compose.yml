@@ -1,0 +1,90 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: playto
+      POSTGRES_USER: playto
+      POSTGRES_PASSWORD: playto
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U playto"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    command: bash entrypoint.sh
+    ports:
+      - "8000:8000"
+    environment:
+      DB_NAME: playto
+      DB_USER: playto
+      DB_PASSWORD: playto
+      DB_HOST: db
+      DB_PORT: 5432
+      CELERY_BROKER_URL: sqla+postgresql://playto:playto@db:5432/playto
+      DEBUG: "True"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+  celery_worker:
+    build:
+      context: ./backend
+    command: bash worker_entrypoint.sh
+    environment:
+      DB_NAME: playto
+      DB_USER: playto
+      DB_PASSWORD: playto
+      DB_HOST: db
+      DB_PORT: 5432
+      CELERY_BROKER_URL: sqla+postgresql://playto:playto@db:5432/playto
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+
+  celery_beat:
+    build:
+      context: ./backend
+    command: bash beat_entrypoint.sh
+    environment:
+      DB_NAME: playto
+      DB_USER: playto
+      DB_PASSWORD: playto
+      DB_HOST: db
+      DB_PORT: 5432
+      CELERY_BROKER_URL: sqla+postgresql://playto:playto@db:5432/playto
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  pgdata:
