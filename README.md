@@ -472,4 +472,3 @@ docker-compose logs -f celery_worker
 # Django shell
 docker-compose exec backend python manage.py shell
 ```
-```
