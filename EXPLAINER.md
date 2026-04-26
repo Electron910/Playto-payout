@@ -45,17 +45,17 @@ WHERE merchant_id = %s;
 
 ### Why four entry types instead of just credit and debit?
 
-With only credit/debit, a pending payout has no footprint in the ledger. Two requests
-arriving at the same time both see the full balance and both pass the check. The hold
-entry solves this. When a payout is requested, a hold entry is written immediately inside
+    With only credit and debit a pending payout has no value in the ledger. Two requests
+arriving at the same time and both see the full balance and both pass the check. The hold
+entry solves this. When a payout is requested, a hold entry is created immediately inside
 the same transaction. The next request's balance query sees that hold and gets a reduced
 available balance.
 
-The release entry removes the hold when the payout finishes — either completed or failed.
+The release entry removes the hold when the payout finishes either completed or failed.
 If completed, a debit entry is also written. If failed, just the release, so the money
 goes back to available.
 
-I never store balance as a column. It's always derived from the ledger. One source of truth.
+I have never stored balance in a column. It's always derived from the ledger. One source of truth.
 No sync issues. The integrity check endpoint verifies `credits - debits - held = available`
 on every call.
 
@@ -87,7 +87,7 @@ with transaction.atomic():
 ```
 
 `select_for_update()` issues a `SELECT ... FOR UPDATE` in PostgreSQL. This acquires a
-row-level exclusive lock on the merchant row. Any other transaction trying to
+row level exclusive lock on the row. Any other transaction trying to
 `select_for_update` on the same merchant row blocks until the first one commits or
 rolls back.
 
@@ -100,8 +100,8 @@ The key detail: the balance check and the hold write are inside the same `transa
 The lock is held for the entire block. There's no gap between "check" and "deduct" where
 another request could sneak in.
 
-I use the Merchant row as the lock target rather than trying to lock ledger entries.
-Simpler, and every payout for a merchant goes through the same lock.
+I use the merchant row as the lock target rather than trying to lock ledger entries.
+Simpler and every payout for a merchant goes through the same lock.
 
 ---
 
@@ -127,12 +127,12 @@ if existing_record:
         )
 ```
 
-When a payout is created successfully, I store the full response (status code + body)
-in this table. Next time the same key comes in, I return the cached response without
+When a payout is created successfully it store the full response 
+in this table. Next time the same key comes in, it will return the cached response without
 creating anything.
 
 Keys are scoped per merchant. Keys expire after 24 hours. A Celery task cleans up
-expired records every hour.
+expired ones every hour.
 
 ### What if the first request is still in flight?
 
@@ -148,16 +148,16 @@ class Meta:
     ]
 ```
 
-If request A is inside the `transaction.atomic()` block (hasn't committed yet) and
+If request A is inside the `transaction.atomic()` block and
 request B arrives with the same key:
 
-- Request B won't find an `IdempotencyRecord` yet (A hasn't committed).
-- Request B enters the atomic block, hits `select_for_update` on the merchant, and blocks because A holds the lock.
+- Request B won't find an `IdempotencyRecord` because A hasn't committed.
+- Request B enters the atomic block, hits `select_for_update` on the merchant and blocks because A holds the lock.
 - A commits. The idempotency record and payout are now visible.
-- B unblocks, goes back to check the idempotency table, but wait — B already passed that check.
+- B unblocks, goes back to check the idempotency table, but waits as B already passed that check.
 - B tries to create a payout with the same idempotency key. The unique constraint on the Payout table stops it. The transaction rolls back. The exception handler returns a 500.
 
-In practice, the `select_for_update` serializes all payout requests for the same merchant,
+In practice, the `select_for_update` serializes all payout requests for the same merchant
 so the second request almost always finds the idempotency record from the first. The DB
 constraint is the safety net.
 
@@ -197,7 +197,7 @@ def complete_payout(payout_id):
         ...
 ```
 
-Same check exists in `fail_payout` and `process_single_payout`. The payout row is locked
+Same check is there in `fail_payout` and `process_single_payout`. The payout row is locked
 with `select_for_update` before the check, so no two workers can transition the same
 payout simultaneously.
 
@@ -213,10 +213,10 @@ Illegal transitions that are blocked:
 
 ### Bug 1: Balance check without database locking
 
-When I asked AI to write the payout creation logic, it gave me this:
+When I asked it to write the payout creation logic, it gave me this:
 
 ```python
-# What AI generated (broken)
+# What it gave
 def post(self, request):
     merchant = get_merchant(request)
     balance = compute_balance(merchant)
@@ -238,7 +238,7 @@ Two requests hit this at the same time. Both read balance = ₹100. Both see eno
 What I replaced it with:
 
 ```python
-# What I wrote (correct)
+# What I wrote
 with transaction.atomic():
     merchant_locked = Merchant.objects.select_for_update().get(id=merchant.id)
     balance = compute_balance(merchant_locked)
@@ -255,7 +255,7 @@ Three things changed:
 2. Added `select_for_update()` to lock the merchant row. Second request waits.
 3. Moved the balance check inside the lock so it reads after acquiring the lock, not before.
 
-This is a textbook TOCTOU (time-of-check-to-time-of-use) bug. The AI treated it like
+This is a textbook time of check to time of use bug. The AI treated it like
 normal application logic. In a payment system, the gap between checking and writing
 is where money gets created or destroyed.
 
@@ -266,7 +266,7 @@ is where money gets created or destroyed.
 AI wrote the idempotency record creation like this:
 
 ```python
-# What AI generated (broken)
+# What it generated
 payout_data = PayoutSerializer(payout).data
 response_body = payout_data  # contains UUID objects
 
@@ -285,12 +285,12 @@ save this into PostgreSQL's `JSONField`, the JSON encoder doesn't know how to
 serialize `UUID`. The request blows up with `Object of type UUID is not JSON serializable`.
 
 This didn't show up until I actually submitted a payout from the frontend. The AI
-tested nothing — it just assumed serializer output was JSON-safe. It's not.
+tested nothing it just assumed serializer output was safe and it's not.
 
 What I replaced it with:
 
 ```python
-# What I wrote (correct)
+# What I gave
 from rest_framework.renderers import JSONRenderer
 import json
 
@@ -303,7 +303,7 @@ payout_data = PayoutSerializer(payout).data
 response_body = serialize_to_json_safe(payout_data)
 ```
 
-`JSONRenderer` knows how to handle UUIDs, datetimes, and all the DRF field types.
+`JSONRenderer` knows how to handle UUIDs, datetimes and all the DRF field types.
 It converts everything to a JSON byte string. `json.loads` turns it back into a
 plain dict with all values as basic Python types — strings, ints, nulls. That dict
 is safe for `JSONField`.
@@ -312,7 +312,7 @@ is safe for `JSONField`.
 
 ### Bug 3: Celery tasks flooding logs even with no work to do
 
-AI wrote the periodic tasks without any early-exit logic:
+AI wrote the periodic tasks without any early exit logic:
 
 ```python
 # What AI generated (noisy)
@@ -324,14 +324,13 @@ def process_pending_payouts():
 ```
 
 With beat running every 5 seconds, Celery logged `Task succeeded` every 5 seconds
-even when there were zero payouts. The terminal was a wall of noise. You couldn't
-spot real events in the log. On top of that, each empty run still hit the database
+even when there were zero payouts. The terminal was a full of noise. I couldn't
+spot real events in the log. On top of that each empty run still hit the database
 with a query for nothing.
 
 What I replaced it with:
 
 ```python
-# What I wrote (quiet)
 @shared_task(name='ledger.tasks.process_pending_payouts')
 def process_pending_payouts():
     pending_payouts = list(Payout.objects.filter(status=Payout.PENDING))
@@ -350,7 +349,7 @@ Three changes:
 2. Wrapped queryset in `list()` to evaluate it once and check the length.
 3. Only logs when there's actual work to do.
 
-Also bumped the schedule from 5s to 10s for pending payouts and 10s to 30s for retry
+Also changed the schedule from 5s to 10s for pending payouts and 10s to 30s for retry
 checks. Fast enough to feel responsive, slow enough to not spam.
 
 Same fix applied to `retry_stuck_payouts` and `cleanup_expired_idempotency_keys`.
@@ -362,7 +361,6 @@ Same fix applied to `retry_stuck_payouts` and `cleanup_expired_idempotency_keys`
 AI configured the frontend proxy like this:
 
 ```javascript
-// What AI generated (broken in Docker)
 proxy: {
   '/api': {
     target: 'http://localhost:8000',
@@ -379,7 +377,7 @@ Every API call failed with `ECONNREFUSED`.
 What I replaced it with:
 
 ```javascript
-// What I wrote (correct for Docker)
+// What gave
 proxy: {
   '/api': {
     target: 'http://backend:8000',
